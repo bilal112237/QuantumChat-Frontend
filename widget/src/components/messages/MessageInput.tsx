@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { useWidget } from '../../context/WidgetContext';
-import { prepareOutgoingContent } from '../../utils/messageCrypto';
+import { prepareOutgoingContent, ensureConversationKey } from '../../utils/messageCrypto';
+import { encryptFileForUpload } from '../../utils/attachmentCrypto';
 import type { IMessage, IAttachment } from '@quantum-chat/shared';
 
 interface MessageInputProps {
@@ -29,9 +30,20 @@ export function MessageInput({ replyTo, onClearReply }: MessageInputProps) {
     typingTimeout.current = setTimeout(() => socket?.stopTyping(convId), 2000);
   };
 
+  const sendKeyExchangeIfNeeded = async () => {
+    const { keyExchange } = await ensureConversationKey(convId);
+    if (!keyExchange) return;
+    try {
+      await socket?.sendMessage({ conversationId: convId, content: keyExchange });
+    } catch {
+      await api.sendMessage({ conversationId: convId, content: keyExchange });
+    }
+  };
+
   const handleSend = async () => {
     if (!content.trim() && attachments.length === 0) return;
     const plaintext = content.trim();
+    const hasAttachments = attachments.length > 0;
 
     try {
       if (plaintext) {
@@ -43,14 +55,15 @@ export function MessageInput({ replyTo, onClearReply }: MessageInputProps) {
           conversationId: convId,
           content: encrypted,
           replyTo: replyTo?._id,
-          attachmentIds: attachments.length ? attachments : undefined,
+          attachmentIds: hasAttachments ? attachments : undefined,
         });
-      } else {
+      } else if (hasAttachments) {
+        await sendKeyExchangeIfNeeded();
         await socket?.sendMessage({
           conversationId: convId,
           content: '',
           replyTo: replyTo?._id,
-          attachmentIds: attachments.length ? attachments : undefined,
+          attachmentIds: attachments,
         });
       }
     } catch {
@@ -63,14 +76,15 @@ export function MessageInput({ replyTo, onClearReply }: MessageInputProps) {
           conversationId: convId,
           content: encrypted,
           replyTo: replyTo?._id,
-          attachmentIds: attachments.length ? attachments : undefined,
+          attachmentIds: hasAttachments ? attachments : undefined,
         });
-      } else {
+      } else if (hasAttachments) {
+        await sendKeyExchangeIfNeeded();
         await api.sendMessage({
           conversationId: convId,
           content: '',
           replyTo: replyTo?._id,
-          attachmentIds: attachments.length ? attachments : undefined,
+          attachmentIds: attachments,
         });
       }
     }
@@ -91,7 +105,8 @@ export function MessageInput({ replyTo, onClearReply }: MessageInputProps) {
     }
     setIsUploading(true);
     try {
-      const attachment: IAttachment = await api.uploadFile(file);
+      const { file: encryptedFile, meta } = await encryptFileForUpload(convId, file);
+      const attachment: IAttachment = await api.uploadFile(encryptedFile, meta);
       setAttachments((prev) => [...prev, attachment._id]);
       setPendingFiles((prev) => [...prev, { id: attachment._id, name: file.name }]);
     } catch (err) {

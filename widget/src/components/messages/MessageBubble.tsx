@@ -3,6 +3,7 @@ import { useWidget } from '../../context/WidgetContext';
 import { Avatar } from '../ui/Avatar';
 import { formatMessageTime } from '../../utils/helpers';
 import { encryptEditedContent } from '../../utils/messageCrypto';
+import { EncryptedAttachment } from './EncryptedAttachment';
 import type { IMessage, IAttachment } from '@quantum-chat/shared';
 
 const REACTIONS = ['👍', '❤️', '😂', '🔥', '👏'];
@@ -132,6 +133,16 @@ export function MessageBubble({ message, isOwn, onReply }: MessageBubbleProps) {
             {attachments.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: message.content ? 8 : 0 }}>
                 {attachments.map((file) => {
+                  if (file.isEncrypted) {
+                    return (
+                      <EncryptedAttachment
+                        key={file._id}
+                        file={file}
+                        conversationId={message.conversationId}
+                        baseUrl={baseUrl}
+                      />
+                    );
+                  }
                   const fileUrl = file.url?.startsWith('http') ? file.url : `${baseUrl}${file.url}`;
                   const isImage = file.mimeType?.startsWith('image/');
                   return isImage ? (

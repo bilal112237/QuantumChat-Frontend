@@ -53,7 +53,7 @@ function b64Encode(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function b64Decode(b64: string): Uint8Array<ArrayBuffer> {
+export function b64Decode(b64: string): Uint8Array<ArrayBuffer> {
   const binary = atob(b64);
   const buffer = new ArrayBuffer(binary.length);
   const bytes = new Uint8Array(buffer);
@@ -80,6 +80,38 @@ export async function encryptPlaintext(keyBase64: string, plaintext: string): Pr
   const encoded = new TextEncoder().encode(plaintext);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
   return wrapEnvelope({ v: 1, t: 'msg', c: b64Encode(new Uint8Array(ciphertext)), i: b64Encode(iv) });
+}
+
+export async function encryptBytes(
+  keyBase64: string,
+  data: ArrayBuffer
+): Promise<{ ciphertext: string; iv: string }> {
+  const key = await importKey(keyBase64);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  return { ciphertext: b64Encode(new Uint8Array(ciphertext)), iv: b64Encode(iv) };
+}
+
+export async function decryptBytes(
+  keyBase64: string,
+  ciphertextB64: string,
+  ivB64: string
+): Promise<ArrayBuffer | null> {
+  return decryptBytesRaw(keyBase64, b64Decode(ciphertextB64), ivB64);
+}
+
+export async function decryptBytesRaw(
+  keyBase64: string,
+  ciphertext: BufferSource,
+  ivB64: string
+): Promise<ArrayBuffer | null> {
+  try {
+    const key = await importKey(keyBase64);
+    const iv = b64Decode(ivB64);
+    return await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+  } catch {
+    return null;
+  }
 }
 
 export async function decryptEnvelope(keyBase64: string, envelope: E2EEnvelope): Promise<string | null> {

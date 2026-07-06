@@ -1,14 +1,15 @@
 import type { IMessage } from '@quantum-chat/shared';
 import {
-  createKeyEnvelope,
   decryptContent,
   encryptPlaintext,
-  generateConversationKey,
   getStoredKey,
   isE2EContent,
   parseEnvelope,
   storeKey,
 } from './e2eCrypto';
+import { ensureConversationKey } from './attachmentCrypto';
+
+export { ensureConversationKey };
 
 export const E2E_PREVIEW = '🔒 Encrypted message';
 export const E2E_DECRYPT_FAILED = '🔒 Unable to decrypt message';
@@ -17,15 +18,7 @@ export async function prepareOutgoingContent(
   conversationId: string,
   plaintext: string
 ): Promise<{ encrypted: string; keyExchange?: string }> {
-  let key = getStoredKey(conversationId);
-  let keyExchange: string | undefined;
-
-  if (!key) {
-    key = await generateConversationKey();
-    storeKey(conversationId, key);
-    keyExchange = createKeyEnvelope(key);
-  }
-
+  const { key, keyExchange } = await ensureConversationKey(conversationId);
   const encrypted = await encryptPlaintext(key, plaintext);
   return { encrypted, keyExchange };
 }

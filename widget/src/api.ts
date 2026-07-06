@@ -102,9 +102,20 @@ export class ApiClient {
     return this.request<{ count: number }>('/conversations/unread');
   }
 
-  async uploadFile(file: File) {
+  async uploadFile(file: File, meta?: {
+    isEncrypted: boolean;
+    encryptionIv: string;
+    originalMimeType: string;
+    encryptedOriginalName: string;
+  }) {
     const formData = new FormData();
     formData.append('file', file);
+    if (meta?.isEncrypted) {
+      formData.append('isEncrypted', 'true');
+      formData.append('encryptionIv', meta.encryptionIv);
+      formData.append('originalMimeType', meta.originalMimeType);
+      formData.append('encryptedOriginalName', meta.encryptedOriginalName);
+    }
     const headers: Record<string, string> = { 'X-Api-Key': this.apiKey };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
 
