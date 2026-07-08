@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useKeyRotation } from '../hooks/useKeyRotation.js';
 import client from '../api/client.js';
 import { connectSocket, getSocket } from '../api/socket.js';
-import { encryptMessage, decryptMessage, encryptBytes } from '../crypto/keys.js';
+import { sealMessage, unsealMessage, sealBytes } from '../crypto/keys.js';
 import { getCurrentKeyPair, findSecretKeyForPublicKey } from '../crypto/keyStorage.js';
 import UserList from '../components/UserList.jsx';
 import MessageBubble from '../components/MessageBubble.jsx';
@@ -28,31 +28,21 @@ export default function Chat() {
   const selectedUserRef = useRef(null);
   selectedUserRef.current = selectedUser;
 
-  // For a given record carrying senderPublicKey/recipientPublicKey (a
-  // message or an attachment), figures out which of the two snapshotted
-  // keys was "mine" at send time and looks up the matching secret key from
-  // the local keyring — this works across any number of rotations, because
-  // every keypair this device has ever used is kept, not just the latest.
-  const resolveKeys = useCallback(
-    (record, isMine) => {
-      const myPublicKeyAtTime = isMine ? record.senderPublicKey : record.recipientPublicKey;
-      const otherPublicKeyAtTime = isMine ? record.recipientPublicKey : record.senderPublicKey;
-      return {
-        mySecretKey: findSecretKeyForPublicKey(user.id, myPublicKeyAtTime),
-        otherPublicKeyAtTime,
-      };
-    },
-    [user]
-  );
+  // Every sealed-box envelope names the public key it was sealed to
+  // (targetPublicKey). Opening it just means finding that key's private
+  // half in the local keyring — a public key never appears here, because
+  // unsealing structurally requires a private key (see crypto/keys.js).
+  const resolveMySecretKey = useCallback((targetPublicKeyHex) => findSecretKeyForPublicKey(user.id, targetPublicKeyHex), [user]);
 
   const decorate = useCallback(
     (raw) => {
       const isMine = raw.from === user.id;
-      const { mySecretKey, otherPublicKeyAtTime } = resolveKeys(raw, isMine);
-      const text = mySecretKey ? decryptMessage(raw.ciphertext, raw.nonce, otherPublicKeyAtTime, mySecretKey) : null;
+      const envelope = isMine ? raw.forSender : raw.forRecipient;
+      const mySecretKey = resolveMySecretKey(envelope.targetPublicKey);
+      const text = mySecretKey ? unsealMessage(envelope, mySecretKey) : null;
       return { ...raw, text };
     },
-    [user, resolveKeys]
+    [user, resolveMySecretKey]
   );
 
   useEffect(() => {
@@ -94,14 +84,12 @@ export default function Chat() {
     if (!draft.trim() || !selectedUser) return;
     try {
       const mine = getCurrentKeyPair(user.id);
-      const { ciphertext, nonce } = encryptMessage(draft, selectedUser.publicKey, mine.secretKey);
-      const { data } = await client.post('/messages', {
-        to: selectedUser.id,
-        ciphertext,
-        nonce,
-        senderPublicKey: mine.publicKey,
-        recipientPublicKey: selectedUser.publicKey,
-      });
+      // Sealed twice: once to the recipient (so they can read it), once to
+      // my own current key (so I can read my own sent history back — the
+      // ephemeral key from either seal is discarded right after sealing).
+      const forRecipient = sealMessage(draft, selectedUser.publicKey);
+      const forSender = sealMessage(draft, mine.publicKey);
+      const { data } = await client.post('/messages', { to: selectedUser.id, forRecipient, forSender });
       setMessages((prev) => [...prev, decorate(data.data)]);
       setDraft('');
     } catch (err) {
@@ -116,23 +104,25 @@ export default function Chat() {
     try {
       const mine = getCurrentKeyPair(user.id);
       const fileBytes = new Uint8Array(await file.arrayBuffer());
-      const { cipherBytes, nonce: fileNonce } = encryptBytes(fileBytes, selectedUser.publicKey, mine.secretKey);
+      // Attachments are sealed to the recipient only (not doubled like text)
+      // to avoid uploading every file twice — the sender keeps their own
+      // copy locally, so they don't need a server-side readable copy too.
+      const sealed = sealBytes(fileBytes, selectedUser.publicKey);
 
       const formData = new FormData();
-      formData.append('file', new Blob([cipherBytes]), file.name);
+      formData.append('file', new Blob([sealed.cipherBytes]), file.name);
       formData.append('recipientId', selectedUser.id);
-      formData.append('nonce', fileNonce);
-      formData.append('senderPublicKey', mine.publicKey);
-      formData.append('recipientPublicKey', selectedUser.publicKey);
+      formData.append('nonce', sealed.nonce);
+      formData.append('ephemeralPublicKey', sealed.ephemeralPublicKey);
+      formData.append('targetPublicKey', sealed.targetPublicKey);
       const uploadRes = await client.post('/attachments', formData);
 
-      const { ciphertext, nonce } = encryptMessage('', selectedUser.publicKey, mine.secretKey);
+      const forRecipient = sealMessage('', selectedUser.publicKey);
+      const forSender = sealMessage('', mine.publicKey);
       const { data } = await client.post('/messages', {
         to: selectedUser.id,
-        ciphertext,
-        nonce,
-        senderPublicKey: mine.publicKey,
-        recipientPublicKey: selectedUser.publicKey,
+        forRecipient,
+        forSender,
         attachmentId: uploadRes.data.data.id,
       });
       setMessages((prev) => [...prev, decorate(data.data)]);
@@ -200,7 +190,7 @@ export default function Chat() {
                   key={m.id || m._id}
                   message={m}
                   isMine={m.from === user.id}
-                  resolveKeys={(record) => resolveKeys(record, m.from === user.id)}
+                  resolveAttachmentKey={(attachment) => resolveMySecretKey(attachment.targetPublicKey)}
                 />
               ))}
               <div ref={bottomRef} />

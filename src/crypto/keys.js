@@ -24,37 +24,64 @@ export function generateKeyPair() {
   return { publicKey: toHex(publicKey), secretKey: toHex(secretKey) };
 }
 
-// Encrypts `plaintext` for `recipientPublicKeyHex` using the sender's own
-// secret key. Diffie-Hellman makes the resulting shared key symmetric, so
-// the sender can also use this same pairing to decrypt their own sent
-// messages later (see decryptMessage).
-export function encryptMessage(plaintext, recipientPublicKeyHex, senderSecretKeyHex) {
+// --- Sealed-box encryption ------------------------------------------------
+// A long-term public key is only ever an input to sealMessage(), never to
+// unsealMessage(); a long-term private key is only ever an input to
+// unsealMessage(), never to sealMessage(). This isn't a policy choice
+// enforced by convention — the functions are structurally incapable of the
+// other operation: sealMessage() doesn't take a secret key argument at all,
+// so there is nothing to encrypt "as" the caller's own identity.
+//
+// This is the standard "sealed box" construction (as in libsodium's
+// crypto_box_seal): to encrypt, generate a one-time-use ephemeral keypair,
+// box the plaintext with (ephemeral secret key, recipient's long-term public
+// key), then discard the ephemeral secret key and attach the ephemeral
+// public key to the envelope so the recipient can redo the Diffie-Hellman
+// on their end with their own long-term private key. The tradeoff versus
+// mutual-key boxing is that the ciphertext no longer cryptographically
+// proves who sent it (there's no sender private key in the computation at
+// all) — this app already authenticates the sender at the API layer via the
+// JWT on every /messages POST, so that isn't a loss in practice here.
+export function sealMessage(plaintext, targetPublicKeyHex) {
+  const ephemeral = nacl.box.keyPair();
   const nonce = nacl.randomBytes(nacl.box.nonceLength);
   const messageBytes = new TextEncoder().encode(plaintext);
-  const cipher = nacl.box(messageBytes, nonce, fromHex(recipientPublicKeyHex), fromHex(senderSecretKeyHex));
-  return { ciphertext: encodeBase64(cipher), nonce: encodeBase64(nonce) };
+  const cipher = nacl.box(messageBytes, nonce, fromHex(targetPublicKeyHex), ephemeral.secretKey);
+  return {
+    ciphertext: encodeBase64(cipher),
+    nonce: encodeBase64(nonce),
+    ephemeralPublicKey: toHex(ephemeral.publicKey),
+    targetPublicKey: targetPublicKeyHex.toLowerCase(),
+  };
 }
 
-// Decrypts a message exchanged with `otherPartyPublicKeyHex`, regardless of
-// whether the current user was the sender or the recipient.
-export function decryptMessage(ciphertextB64, nonceB64, otherPartyPublicKeyHex, mySecretKeyHex) {
-  const cipher = decodeBase64(ciphertextB64);
-  const nonce = decodeBase64(nonceB64);
-  const plainBytes = nacl.box.open(cipher, nonce, fromHex(otherPartyPublicKeyHex), fromHex(mySecretKeyHex));
+// envelope: { ciphertext, nonce, ephemeralPublicKey }. myPrivateKeyHex must
+// be the private half of whichever public key the envelope was sealed to
+// (envelope.targetPublicKey) — look it up from the local keyring.
+export function unsealMessage(envelope, myPrivateKeyHex) {
+  const cipher = decodeBase64(envelope.ciphertext);
+  const nonce = decodeBase64(envelope.nonce);
+  const plainBytes = nacl.box.open(cipher, nonce, fromHex(envelope.ephemeralPublicKey), fromHex(myPrivateKeyHex));
   if (!plainBytes) return null;
   return new TextDecoder().decode(plainBytes);
 }
 
 // Raw-byte variants for attachments — TextEncoder/TextDecoder would corrupt
-// arbitrary binary data, so files are boxed directly instead of going
+// arbitrary binary data, so files are sealed directly instead of going
 // through the string-based helpers above.
-export function encryptBytes(bytes, recipientPublicKeyHex, senderSecretKeyHex) {
+export function sealBytes(bytes, targetPublicKeyHex) {
+  const ephemeral = nacl.box.keyPair();
   const nonce = nacl.randomBytes(nacl.box.nonceLength);
-  const cipherBytes = nacl.box(bytes, nonce, fromHex(recipientPublicKeyHex), fromHex(senderSecretKeyHex));
-  return { cipherBytes, nonce: encodeBase64(nonce) };
+  const cipherBytes = nacl.box(bytes, nonce, fromHex(targetPublicKeyHex), ephemeral.secretKey);
+  return {
+    cipherBytes,
+    nonce: encodeBase64(nonce),
+    ephemeralPublicKey: toHex(ephemeral.publicKey),
+    targetPublicKey: targetPublicKeyHex.toLowerCase(),
+  };
 }
 
-export function decryptBytes(cipherBytes, nonceB64, otherPartyPublicKeyHex, mySecretKeyHex) {
-  const nonce = decodeBase64(nonceB64);
-  return nacl.box.open(cipherBytes, nonce, fromHex(otherPartyPublicKeyHex), fromHex(mySecretKeyHex));
+export function unsealBytes(cipherBytes, envelope, myPrivateKeyHex) {
+  const nonce = decodeBase64(envelope.nonce);
+  return nacl.box.open(cipherBytes, nonce, fromHex(envelope.ephemeralPublicKey), fromHex(myPrivateKeyHex));
 }

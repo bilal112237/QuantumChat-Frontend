@@ -301,6 +301,16 @@ input {
   font-size: 12px;
 }
 
+.attachment-chip-disabled {
+  opacity: 0.75;
+}
+
+.attachment-note {
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .attachment-preview {
   max-width: 220px;
   border-radius: 10px;
