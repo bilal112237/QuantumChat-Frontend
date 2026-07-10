@@ -44,6 +44,7 @@ src/
 - **Backing up keys** (`Register.jsx`): right after signup, `register()` returns the raw 5-keypair `keySet` (the only time it's ever available outside the keyring) so the UI can show it and offer a "Download keys.txt" button (`formatKeyFile` + `downloadKeyFile` in `keyFile.js`).
 - **Restoring on a new device** (`Chat.jsx`'s "no local keyring" gate): "Import keys.txt" reads the uploaded file, `parseKeyFile()` pulls out the 5 hex keys, and `importKeys()` in `AuthContext.jsx` validates each one by deriving its public key and checking it against the logged-in account's actual `publicKeys` before adding anything to the keyring — a file that doesn't match is rejected with an error, not silently accepted.
 - **Recovering with no backup at all**: `regenerateKeys()` in `AuthContext.jsx` generates a brand-new 5-key pool and publishes it via `PATCH /users/me/public-keys`, replacing the old one — offered as the fallback next to "Import keys.txt" when no local keyring is found. History under the old pool is unrecoverable either way once you take this path.
+- **Logout wipes the keyring**: `logout()` calls `clearKeyring(user.id)` before clearing the session, so the "no local keyring" gate always fires on the next login — `keys.txt` (or a fresh pool) is required every time, not just on a genuinely new device.
 
 ## Environment variables
 
