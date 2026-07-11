@@ -2,22 +2,102 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
+function getFriendlyRegisterError(serverError, statusCode) {
+  const msg = (serverError || '').toLowerCase();
+
+  if (statusCode === 409 || msg.includes('already in use')) {
+    return {
+      text: 'Looks like someone beat you to it — that username or email is already taken.',
+      action: { label: 'Log in to your account', to: '/login' },
+    };
+  }
+
+  if (msg.includes('password must be at least 8')) {
+    return {
+      text: 'Your password needs to be at least 8 characters. A mix of letters, numbers, and symbols works best.',
+      action: null,
+    };
+  }
+
+  if (statusCode === 400 || msg.includes('required')) {
+    return {
+      text: "Looks like some fields are missing. We need your username, email, and a strong password to get started.",
+      action: null,
+    };
+  }
+
+  if (msg.includes('publickeys')) {
+    return {
+      text: 'There was a problem generating your encryption keys. Please refresh the page and try again.',
+      action: null,
+    };
+  }
+
+  if (statusCode >= 500) {
+    return {
+      text: "Our servers are having a moment — hang tight and try again shortly.",
+      action: null,
+    };
+  }
+
+  if (msg.includes('network') || msg.includes('econnrefused')) {
+    return {
+      text: "Can't reach the server right now. Check your connection and give it another shot.",
+      action: null,
+    };
+  }
+
+  return {
+    text: serverError || "Something unexpected happened. Let's try that again.",
+    action: null,
+  };
+}
+
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ username: '', email: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+    setError(null);
+
+    // Client-side validation with friendly messages
+    if (!form.username.trim()) {
+      setError({ text: "Pick a username — this is how other people will find you.", action: null });
+      return;
+    }
+
+    if (form.username.trim().length < 3) {
+      setError({ text: 'Your username needs to be at least 3 characters. Short and memorable works great!', action: null });
+      return;
+    }
+
+    if (!form.email.trim()) {
+      setError({ text: "We'll need your email so you can log back in later.", action: null });
+      return;
+    }
+
+    if (!form.password) {
+      setError({ text: 'Choose a strong password to protect your encrypted messages.', action: null });
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setError({ text: 'Your password needs at least 8 characters. The stronger the better — your encryption keys depend on it.', action: null });
+      return;
+    }
+
     setLoading(true);
     try {
       await register(form);
       navigate('/chat');
     } catch (err) {
-      setError(err.response?.data?.error || 'Registration failed');
+      const serverMsg = err.response?.data?.error;
+      const status = err.response?.status;
+      setError(getFriendlyRegisterError(serverMsg, status));
     } finally {
       setLoading(false);
     }
@@ -86,7 +166,16 @@ export default function Register() {
           />
         </div>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && (
+          <div className="auth-error">
+            <span>{error.text}</span>
+            {error.action && (
+              <Link to={error.action.to} className="auth-error-action">
+                {error.action.label}
+              </Link>
+            )}
+          </div>
+        )}
 
         <button type="submit" disabled={loading}>
           {loading ? 'Creating…' : 'Create account'}

@@ -2,22 +2,73 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
+function getFriendlyLoginError(serverError, statusCode) {
+  const msg = (serverError || '').toLowerCase();
+
+  if (statusCode === 401 || msg.includes('invalid email or password')) {
+    return {
+      text: "Hmm, that combination doesn't match our records. Double-check your email and password and give it another go.",
+      action: { label: 'Create an account instead', to: '/register' },
+    };
+  }
+
+  if (statusCode === 400 || msg.includes('required')) {
+    return {
+      text: 'Please fill in both your email and password to continue.',
+      action: null,
+    };
+  }
+
+  if (statusCode >= 500) {
+    return {
+      text: "Something went wrong on our end — it's not you, it's us. Please try again in a moment.",
+      action: null,
+    };
+  }
+
+  if (msg.includes('network') || msg.includes('econnrefused')) {
+    return {
+      text: "Can't reach the server right now. Check your internet connection and try again.",
+      action: null,
+    };
+  }
+
+  return {
+    text: serverError || "Something unexpected happened. Let's try that again.",
+    action: null,
+  };
+}
+
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    setError('');
+    setError(null);
+
+    // Client-side validation with specific messages
+    if (!form.email.trim()) {
+      setError({ text: "We'll need your email address to find your account.", action: null });
+      return;
+    }
+
+    if (!form.password) {
+      setError({ text: 'Enter your password to unlock your encrypted conversations.', action: null });
+      return;
+    }
+
     setLoading(true);
     try {
       await login(form);
       navigate('/chat');
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed');
+      const serverMsg = err.response?.data?.error;
+      const status = err.response?.status;
+      setError(getFriendlyLoginError(serverMsg, status));
     } finally {
       setLoading(false);
     }
@@ -66,7 +117,16 @@ export default function Login() {
           />
         </div>
 
-        {error && <div className="auth-error">{error}</div>}
+        {error && (
+          <div className="auth-error">
+            <span>{error.text}</span>
+            {error.action && (
+              <Link to={error.action.to} className="auth-error-action">
+                {error.action.label}
+              </Link>
+            )}
+          </div>
+        )}
 
         <button type="submit" disabled={loading}>
           {loading ? 'Logging in…' : 'Log in'}
