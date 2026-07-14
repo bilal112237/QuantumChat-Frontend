@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
 export default function Login() {
   const { login } = useAuth();
@@ -27,7 +28,12 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+    <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 relative selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+      {/* Top bar with ThemeToggle from upstream */}
+      <div className="absolute top-6 right-6">
+        <ThemeToggle />
+      </div>
+
       {/* Brand Logo Link */}
       <Link to="/" className="flex items-center gap-2 group mb-6 transition-transform hover:scale-[1.02]">
         <svg
@@ -58,7 +64,7 @@ export default function Login() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Email Field */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-[#8b949e]">Email Address</label>
+            <label htmlFor="login-email" className="text-xs font-semibold text-[#8b949e]">Email Address</label>
             <div className="relative group">
               <span className="absolute left-3.5 top-[13px] text-[#8b949e] group-focus-within:text-[#00d4ff] transition-colors">
                 <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,6 +77,7 @@ export default function Login() {
                 </svg>
               </span>
               <input
+                id="login-email"
                 type="email"
                 placeholder="name@example.com"
                 value={form.email}
@@ -84,7 +91,7 @@ export default function Login() {
           {/* Password Field */}
           <div className="space-y-1.5">
             <div className="flex justify-between items-center">
-              <label className="text-xs font-semibold text-[#8b949e]">Password</label>
+              <label htmlFor="login-password" className="text-xs font-semibold text-[#8b949e]">Password</label>
               <button
                 type="button"
                 onClick={() => setForgotPasswordClicked(!forgotPasswordClicked)}
@@ -105,6 +112,7 @@ export default function Login() {
                 </svg>
               </span>
               <input
+                id="login-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder="••••••••"
                 value={form.password}
@@ -116,6 +124,7 @@ export default function Login() {
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3.5 top-[13px] text-[#8b949e] hover:text-[#00d4ff] transition-colors"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? (
                   <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { formatKeyFile, downloadKeyFile } from '../crypto/keyFile.js';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
 export default function Register() {
   const { register } = useAuth();
@@ -97,7 +98,12 @@ export default function Register() {
   // -------------------------------------------------------------
   if (keySet) {
     return (
-      <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+      <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 relative selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+        {/* Top Bar with ThemeToggle from upstream */}
+        <div className="absolute top-6 right-6">
+          <ThemeToggle />
+        </div>
+
         <div className="flex items-center gap-2 mb-6">
           <svg className="w-6 h-6 text-[#00d4ff]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -131,7 +137,7 @@ export default function Register() {
 
           {downloaded && (
             <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs text-green-400 font-medium flex items-center gap-2">
-              <svg className="w-4 h-4 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4.5 h-4.5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
               <span>Backup file downloaded as `keys.txt` — keep it secure!</span>
@@ -169,7 +175,12 @@ export default function Register() {
   const isSubmitDisabled = loading || Object.keys(validationErrors).length > 0;
 
   return (
-    <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 py-8 selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+    <div className="min-h-screen bg-[#0a0e14] text-[#e6edf3] flex flex-col items-center justify-center px-4 py-8 relative selection:bg-[#00d4ff]/30 selection:text-[#00d4ff]">
+      {/* Top Bar with ThemeToggle from upstream */}
+      <div className="absolute top-6 right-6">
+        <ThemeToggle />
+      </div>
+
       {/* Brand Logo Link */}
       <Link to="/" className="flex items-center gap-2 group mb-6 transition-transform hover:scale-[1.02]">
         <svg
@@ -200,7 +211,7 @@ export default function Register() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Username Field */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-[#8b949e]">Name (Username)</label>
+            <label htmlFor="register-username" className="text-xs font-semibold text-[#8b949e]">Name (Username)</label>
             <div className="relative group">
               <span className="absolute left-3.5 top-[13px] text-[#8b949e] group-focus-within:text-[#00d4ff] transition-colors">
                 <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -213,6 +224,7 @@ export default function Register() {
                 </svg>
               </span>
               <input
+                id="register-username"
                 type="text"
                 placeholder="quantum_dev"
                 value={form.username}
@@ -230,7 +242,7 @@ export default function Register() {
 
           {/* Email Field */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-[#8b949e]">Email Address</label>
+            <label htmlFor="register-email" className="text-xs font-semibold text-[#8b949e]">Email Address</label>
             <div className="relative group">
               <span className="absolute left-3.5 top-[13px] text-[#8b949e] group-focus-within:text-[#00d4ff] transition-colors">
                 <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -243,6 +255,7 @@ export default function Register() {
                 </svg>
               </span>
               <input
+                id="register-email"
                 type="email"
                 placeholder="name@example.com"
                 value={form.email}
@@ -259,7 +272,7 @@ export default function Register() {
 
           {/* Password Field */}
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-[#8b949e]">Password</label>
+            <label htmlFor="register-password" className="text-xs font-semibold text-[#8b949e]">Password</label>
             <div className="relative group">
               <span className="absolute left-3.5 top-[13px] text-[#8b949e] group-focus-within:text-[#00d4ff] transition-colors">
                 <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -272,6 +285,7 @@ export default function Register() {
                 </svg>
               </span>
               <input
+                id="register-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder="••••••••"
                 value={form.password}
@@ -285,6 +299,7 @@ export default function Register() {
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3.5 top-[13px] text-[#8b949e] hover:text-[#00d4ff] transition-colors"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
               >
                 {showPassword ? (
                   <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -330,6 +345,7 @@ export default function Register() {
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute right-3.5 top-[13px] text-[#8b949e] hover:text-[#00d4ff] transition-colors"
+                aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
               >
                 {showConfirmPassword ? (
                   <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

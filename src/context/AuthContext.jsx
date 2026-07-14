@@ -1,7 +1,15 @@
 import { createContext, useContext, useState, useCallback } from 'react';
 import client from '../api/client.js';
 import { generateKeySet, derivePublicKey, KEY_SET_SIZE } from '../crypto/keys.js';
-import { addKeySetToRing, hasKeyring, saveSession, getStoredUser, clearSession, getToken } from '../crypto/keyStorage.js';
+import {
+  addKeySetToRing,
+  hasKeyring,
+  saveSession,
+  getStoredUser,
+  clearSession,
+  clearKeyring,
+  getToken,
+} from '../crypto/keyStorage.js';
 import { connectSocket, disconnectSocket } from '../api/socket.js';
 
 const AuthContext = createContext(null);
@@ -75,16 +83,29 @@ export function AuthProvider({ children }) {
     [user]
   );
 
+  // Wipes this device's private keys along with the session — the next
+  // login lands with an empty keyring, so the "no local keyring" gate in
+  // Chat.jsx always requires re-importing keys.txt (or generating a fresh
+  // pool) rather than the old keys silently persisting in localStorage.
   const logout = useCallback(() => {
+    if (user) clearKeyring(user.id);
     clearSession();
     disconnectSocket();
     setUser(null);
+  }, [user]);
+
+  const updateSessionUser = useCallback((nextUser) => {
+    if (!nextUser) return;
+    saveSession(getToken(), nextUser);
+    setUser(nextUser);
   }, []);
 
   const hasLocalKeyring = user ? hasKeyring(user.id) : false;
 
   return (
-    <AuthContext.Provider value={{ user, register, login, logout, regenerateKeys, importKeys, hasLocalKeyring }}>
+    <AuthContext.Provider
+      value={{ user, register, login, logout, regenerateKeys, importKeys, hasLocalKeyring, updateSessionUser }}
+    >
       {children}
     </AuthContext.Provider>
   );

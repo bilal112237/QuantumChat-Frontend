@@ -59,6 +59,13 @@ export function hasKeyring(userId) {
   return getKeyring(userId).length > 0;
 }
 
+// Wipes this device's copy of the user's private keys. Used on logout so
+// each new session requires re-importing keys.txt rather than the keyring
+// silently persisting in localStorage across log-outs.
+export function clearKeyring(userId) {
+  localStorage.removeItem(keyringKey(userId));
+}
+
 export function saveSession(token, user) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
@@ -70,7 +77,18 @@ export function getToken() {
 
 export function getStoredUser() {
   const raw = localStorage.getItem(USER_KEY);
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  try {
+    const user = JSON.parse(raw);
+    if (!user || typeof user !== 'object' || !user.id) {
+      clearSession();
+      return null;
+    }
+    return user;
+  } catch {
+    clearSession();
+    return null;
+  }
 }
 
 export function clearSession() {
