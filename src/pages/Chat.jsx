@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDown,
+  Camera,
   Menu,
   MessageSquare,
   Mic,
@@ -20,7 +21,7 @@ import { connectSocket, getSocket } from '../api/socket.js';
 import { sealMessage, unsealMessage, sealBytes, pickRandom } from '../crypto/keys.js';
 import { formatKeyFile, downloadKeyFile, parseKeyFile } from '../crypto/keyFile.js';
 import { getCurrentKeySet, findSecretKeyForPublicKey } from '../crypto/keyStorage.js';
-import { normalizeAttachment, pickRecorderMimeType } from '../crypto/voiceCache.js';
+import { normalizeAttachment, pickRecorderMimeType, attachmentIdOf } from '../crypto/voiceCache.js';
 import { playReceiveSound, playSendSound } from '../utils/sounds.js';
 import {
   conversationKeyForGroup,
@@ -44,6 +45,8 @@ import MessageSearch from '../components/MessageSearch.jsx';
 import DragDropOverlay from '../components/DragDropOverlay.jsx';
 import TypingIndicator from '../components/TypingIndicator.jsx';
 import ForwardModal from '../components/ForwardModal.jsx';
+import CameraCapture from '../components/CameraCapture.jsx';
+import ImageLightbox from '../components/ImageLightbox.jsx';
 import { useToast } from '../components/ToastProvider.jsx';
 import { getHiddenChatIds, hideChat, unhideChat } from '../utils/hiddenChats.js';
 import {
@@ -136,6 +139,9 @@ export default function Chat() {
   const [hasMoreMessages, setHasMoreMessages] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [extrasTick, setExtrasTick] = useState(0);
+  const [uploads, setUploads] = useState([]);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [gallery, setGallery] = useState(null);
 
   const messageListRef = useRef(null);
   const bottomRef = useRef(null);
@@ -154,6 +160,7 @@ export default function Chat() {
   const recordStartedAtRef = useRef(0);
   const dragCountRef = useRef(0);
   const typingTimeoutRef = useRef(null);
+  const imageSrcMapRef = useRef(new Map());
   selectedRef.current = selected;
 
   const bumpActivity = useCallback(() => setActivityTick((n) => n + 1), []);
@@ -663,6 +670,8 @@ export default function Chat() {
     setShowEmojiPicker(false);
     setSearchOpen(false);
     setSidebarOpen(false);
+    setGallery(null);
+    imageSrcMapRef.current = new Map();
     markConversationRead(user.id, c.key);
     bumpActivity();
   }
@@ -893,7 +902,7 @@ export default function Chat() {
     }
   }
 
-  async function sendAttachmentFile(file, { plainBytes } = {}) {
+  async function sendAttachmentFile(file, { plainBytes, quiet } = {}) {
     if (!file || !selected || selected.type !== 'dm') return;
 
     if (file.size > MAX_FILE_SIZE) {
@@ -913,6 +922,10 @@ export default function Chat() {
     const forRecipientFile = sealBytes(fileBytes, recipientPublicKey);
     const forSenderFile = sealBytes(fileBytes, myKey.publicKey);
 
+    const uploadId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const controller = new AbortController();
+    setUploads((prev) => [...prev, { id: uploadId, name: file.name, progress: 0, controller }]);
+
     const formData = new FormData();
     formData.append(
       'file',
@@ -931,37 +944,104 @@ export default function Chat() {
     formData.append('forSenderNonce', forSenderFile.nonce);
     formData.append('forSenderEphemeralPublicKey', forSenderFile.ephemeralPublicKey);
     formData.append('forSenderTargetPublicKey', forSenderFile.targetPublicKey);
-    const uploadRes = await client.post('/attachments', formData);
-    const attachmentId = uploadRes.data.data.id;
 
-    const forRecipient = sealMessage('', recipientPublicKey);
-    const forSender = sealMessage('', myKey.publicKey);
-    const { data } = await client.post('/messages', {
-      to: selected.id,
-      forRecipient,
-      forSender,
-      attachmentId,
+    try {
+      const uploadRes = await client.post('/attachments', formData, {
+        signal: controller.signal,
+        onUploadProgress: (event) => {
+          if (!event.total) return;
+          const progress = Math.min(100, Math.round((event.loaded / event.total) * 100));
+          setUploads((prev) => prev.map((u) => (u.id === uploadId ? { ...u, progress } : u)));
+        },
+      });
+      const attachmentId = uploadRes.data.data.id;
+
+      const forRecipient = sealMessage('', recipientPublicKey);
+      const forSender = sealMessage('', myKey.publicKey);
+      const { data } = await client.post('/messages', {
+        to: selected.id,
+        forRecipient,
+        forSender,
+        attachmentId,
+      });
+      recordActivityFromMessage(data.data);
+      setMessages((prev) => {
+        const id = String(data.data.id || data.data._id);
+        if (prev.some((m) => String(m.id || m._id) === id)) return prev;
+        return [...prev, decorate(data.data)];
+      });
+      playSendSound();
+      if (!quiet) showToast('File sent successfully', 'success', 3000);
+      setTimeout(() => scrollToBottom('smooth'), 50);
+    } catch (err) {
+      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
+        showToast('Upload cancelled', 'info', 2500);
+        return;
+      }
+      throw err;
+    } finally {
+      setUploads((prev) => prev.filter((u) => u.id !== uploadId));
+    }
+  }
+
+  function cancelUpload(uploadId) {
+    setUploads((prev) => {
+      const item = prev.find((u) => u.id === uploadId);
+      item?.controller?.abort();
+      return prev;
     });
-    recordActivityFromMessage(data.data);
-    setMessages((prev) => {
-      const id = String(data.data.id || data.data._id);
-      if (prev.some((m) => String(m.id || m._id) === id)) return prev;
-      return [...prev, decorate(data.data)];
-    });
-    playSendSound();
-    showToast('File sent successfully', 'success', 3000);
-    setTimeout(() => scrollToBottom('smooth'), 50);
+  }
+
+  async function sendAttachmentFiles(filesOrFile) {
+    const list = Array.isArray(filesOrFile) ? filesOrFile : filesOrFile ? [filesOrFile] : [];
+    const files = list.filter(Boolean);
+    if (!files.length || !selected || selected.type !== 'dm') return;
+
+    let ok = 0;
+    let failed = 0;
+    for (const file of files) {
+      try {
+        await sendAttachmentFile(file, { quiet: files.length > 1 });
+        ok += 1;
+      } catch (err) {
+        failed += 1;
+        showToast(err.response?.data?.error || err.message || `Failed to send ${file.name}`, 'error');
+      }
+    }
+    if (files.length > 1 && ok > 0) {
+      showToast(`${ok} file${ok === 1 ? '' : 's'} sent${failed ? `, ${failed} failed` : ''}`, failed ? 'error' : 'success', 3500);
+    }
   }
 
   async function handleFileChange(e) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file || !selected || selected.type !== 'dm') return;
-    try {
-      await sendAttachmentFile(file);
-    } catch (err) {
-      showToast(err.response?.data?.error || 'Failed to send attachment', 'error');
+    if (!files.length || !selected || selected.type !== 'dm') return;
+    await sendAttachmentFiles(files);
+  }
+
+  function handlePaste(e) {
+    if (!selected || selected.type !== 'dm' || sendingVoice || recording) return;
+    const items = e.clipboardData?.items;
+    if (!items?.length) return;
+    const imageFiles = [];
+    for (const item of items) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          const named =
+            file.name && file.name !== 'image.png'
+              ? file
+              : new File([file], `paste-${Date.now()}.png`, { type: file.type || 'image/png' });
+          imageFiles.push(named);
+        }
+      }
     }
+    if (!imageFiles.length) return;
+    e.preventDefault();
+    sendAttachmentFiles(imageFiles).catch((err) => {
+      showToast(err.message || 'Paste upload failed', 'error');
+    });
   }
 
   // Drag and drop events
@@ -985,12 +1065,36 @@ export default function Chat() {
     e.preventDefault();
     dragCountRef.current = 0;
     setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      sendAttachmentFile(file).catch((err) => {
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length) {
+      sendAttachmentFiles(files).catch((err) => {
         showToast(err.message || 'File drop failed', 'error');
       });
     }
+  }
+
+  function handleImageReady(id, src, filename) {
+    if (!id || !src) return;
+    imageSrcMapRef.current.set(String(id), { src, alt: filename || 'Image' });
+  }
+
+  function handleImagePreview(id) {
+    const items = [];
+    for (const m of messages) {
+      const attId = attachmentIdOf(m.attachment);
+      if (!attId) continue;
+      const entry = imageSrcMapRef.current.get(String(attId));
+      if (entry) items.push({ id: String(attId), ...entry });
+    }
+    if (!items.length) {
+      const fallback = imageSrcMapRef.current.get(String(id));
+      if (fallback) {
+        setGallery({ items: [{ id: String(id), ...fallback }], index: 0 });
+      }
+      return;
+    }
+    const index = Math.max(0, items.findIndex((it) => it.id === String(id)));
+    setGallery({ items, index: index < 0 ? 0 : index });
   }
 
   function clearRecordingResources({ keepChunks = false } = {}) {
@@ -1549,7 +1653,34 @@ export default function Chat() {
                 )}
 
                 {isDragging && (
-                  <DragDropOverlay isVisible={true} onFileDrop={sendAttachmentFile} />
+                  <DragDropOverlay isVisible={true} onFileDrop={sendAttachmentFiles} />
+                )}
+
+                {uploads.length > 0 && (
+                  <div className="upload-progress-panel" aria-live="polite">
+                    {uploads.map((u) => (
+                      <div key={u.id} className="upload-progress-row">
+                        <div className="upload-progress-meta">
+                          <span className="upload-progress-name" title={u.name}>
+                            Encrypting & uploading {u.name}
+                          </span>
+                          <span className="upload-progress-pct">{u.progress}%</span>
+                        </div>
+                        <div className="upload-progress-track">
+                          <div className="upload-progress-fill" style={{ width: `${u.progress}%` }} />
+                        </div>
+                        <button
+                          type="button"
+                          className="upload-progress-cancel"
+                          onClick={() => cancelUpload(u.id)}
+                          aria-label={`Cancel upload of ${u.name}`}
+                        >
+                          <X size={14} strokeWidth={2} />
+                          Cancel
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
 
                 <AnimatePresence mode="wait">
@@ -1621,6 +1752,8 @@ export default function Chat() {
                               onStar={handleStarMessage}
                               onPin={handlePinMessage}
                               onJumpToReply={handleJumpToReply}
+                              onImagePreview={handleImagePreview}
+                              onImageReady={handleImageReady}
                               onReply={(msg) => {
                                 setEditingMessage(null);
                                 setReplyTo(msg);
@@ -1710,20 +1843,31 @@ export default function Chat() {
                     <div className="composer-hint">
                       <span><kbd>Enter</kbd> send</span>
                       <span><kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span>
-                      <span><kbd>Ctrl</kbd>+<kbd>K</kbd> search</span>
-                      <span style={{ marginLeft: 'auto', opacity: 0.6 }}>Max file: 15 MB</span>
+                      <span><kbd>Ctrl</kbd>+<kbd>V</kbd> paste image</span>
+                      <span style={{ marginLeft: 'auto', opacity: 0.6 }}>Max 15 MB · multi-file OK</span>
                     </div>
                     <form className="composer" onSubmit={handleSend}>
                       {!isGroupChat && (
-                        <button
-                          type="button"
-                          className="attach-button"
-                          onClick={() => fileInputRef.current?.click()}
-                          aria-label="Attach file to message"
-                          disabled={sendingVoice}
-                        >
-                          <Paperclip size={20} strokeWidth={2} aria-hidden="true" />
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="attach-button"
+                            onClick={() => fileInputRef.current?.click()}
+                            aria-label="Attach files to message"
+                            disabled={sendingVoice || uploads.length > 0}
+                          >
+                            <Paperclip size={20} strokeWidth={2} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="attach-button"
+                            onClick={() => setCameraOpen(true)}
+                            aria-label="Capture photo with camera"
+                            disabled={sendingVoice || uploads.length > 0}
+                          >
+                            <Camera size={20} strokeWidth={2} aria-hidden="true" />
+                          </button>
+                        </>
                       )}
                       <button
                         type="button"
@@ -1734,20 +1878,30 @@ export default function Chat() {
                       >
                         <Smile size={20} strokeWidth={2} aria-hidden="true" />
                       </button>
-                      <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        hidden
+                        multiple
+                        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.odt,.rtf,.zip,.rar,.7z,.txt,.csv,.json"
+                        onChange={handleFileChange}
+                      />
                       <textarea
                         ref={textareaRef}
                         placeholder={
                           sendingVoice
                             ? 'Sending voice note…'
-                            : isGroupChat
-                              ? 'Type an encrypted group message…'
-                              : 'Type an encrypted message…'
+                            : uploads.length
+                              ? 'Uploading encrypted file…'
+                              : isGroupChat
+                                ? 'Type an encrypted group message…'
+                                : 'Type an encrypted message…'
                         }
                         value={draft}
                         onChange={handleDraftChange}
                         onInput={handleTextareaInput}
                         onKeyDown={handleTextareaKeyDown}
+                        onPaste={handlePaste}
                         aria-label="Type message body"
                         disabled={sendingVoice}
                         rows={1}
@@ -1766,7 +1920,7 @@ export default function Chat() {
                           className="send-button voice-mic-btn"
                           onClick={startVoiceRecording}
                           aria-label="Record voice note"
-                          disabled={sendingVoice}
+                          disabled={sendingVoice || uploads.length > 0}
                         >
                           <Mic size={18} strokeWidth={2} aria-hidden="true" />
                         </button>
@@ -1830,6 +1984,24 @@ export default function Chat() {
           onCancel={() => setLogoutConfirmOpen(false)}
         />
       )}
+
+      <CameraCapture
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={(file) => {
+          sendAttachmentFiles(file).catch((err) => {
+            showToast(err.message || 'Camera upload failed', 'error');
+          });
+        }}
+      />
+
+      <ImageLightbox
+        isOpen={Boolean(gallery)}
+        items={gallery?.items || []}
+        index={gallery?.index || 0}
+        onIndexChange={(next) => setGallery((g) => (g ? { ...g, index: next } : g))}
+        onClose={() => setGallery(null)}
+      />
     </div>
   );
 }

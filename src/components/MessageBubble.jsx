@@ -13,7 +13,6 @@ import {
   Trash2,
 } from 'lucide-react';
 import AttachmentBubble from './AttachmentBubble.jsx';
-import ImageLightbox from './ImageLightbox.jsx';
 import { QUICK_REACTIONS } from '../utils/emojis.js';
 
 const MENU_GAP = 8;
@@ -121,11 +120,12 @@ export default function MessageBubble({
   onStar,
   onPin,
   onJumpToReply,
+  onImagePreview,
+  onImageReady,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactOpen, setReactOpen] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, placement: 'below', ready: false });
-  const [lightboxSrc, setLightboxSrc] = useState(null);
 
   const rootRef = useRef(null);
   const moreRef = useRef(null);
@@ -327,7 +327,8 @@ export default function MessageBubble({
                 attachment={message.attachment}
                 isMine={isMine}
                 resolveSecretKey={keyResolver}
-                onImagePreview={setLightboxSrc}
+                onImagePreview={onImagePreview}
+                onImageReady={onImageReady}
               />
             )}
             {hasTextContent ? message.text : isDecryptionFail ? <em>[Unable to decrypt message]</em> : null}
@@ -391,14 +392,6 @@ export default function MessageBubble({
           </div>
         )}
       </motion.div>
-      {lightboxSrc && (
-        <ImageLightbox
-          src={lightboxSrc}
-          alt={message.attachment?.filename || 'Image preview'}
-          isOpen={true}
-          onClose={() => setLightboxSrc(null)}
-        />
-      )}
     </>
   );
 }
