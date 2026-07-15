@@ -651,11 +651,25 @@ input:focus-visible,
 }
 
 .auth-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   color: var(--error);
   font-size: 13px;
   padding: 8px 12px;
   background: var(--error-muted);
   border-radius: var(--radius-sm);
+}
+
+.auth-error-action {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.auth-error-action:hover {
+  text-decoration: underline;
 }
 
 /* Theme toggle */
